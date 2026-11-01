@@ -1,8 +1,10 @@
-/* xwlb 归档阅读站 — 零构建客户端渲染 */
+/* xwlb 归档阅读站 — 零构建客户端渲染
+   展示层金字塔重构（2026-11-01）：参考链接置顶 → 摘要 → 正文；TOC 01/02 层次编号。
+   数据层 news/*.md 保持上游兼容格式，解析在渲染后 DOM 上做。 */
 (function () {
   "use strict";
 
-  var state = { catalogue: null, cache: new Map(), md: window.markdownit({ html: true, linkify: true }) };
+  var state = { catalogue: null, cache: new Map(), currentDate: null, md: window.markdownit({ html: true, linkify: true }) };
   var $ = function (id) { return document.getElementById(id); };
 
   /* ---- 主题 ---- */
@@ -20,7 +22,7 @@
   $("nav-toggle").addEventListener("click", function () { document.body.classList.toggle("nav-open"); });
   $("overlay").addEventListener("click", function () { document.body.classList.remove("nav-open"); });
 
-  /* ---- 路由 ---- */
+  /* ---- 路由（hash 只用于 #date=；文内锚点用 scrollIntoView，不污染 hash） ---- */
   function parseHash() {
     var m = location.hash.match(/^#date=(\d{8})$/);
     return m ? m[1] : null;
@@ -31,6 +33,7 @@
   });
 
   function fmt(date) { return date.slice(0, 4) + "-" + date.slice(4, 6) + "-" + date.slice(6, 8); }
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
 
   /* ---- 侧栏渲染 ---- */
   function buildSidebar(filter) {
@@ -138,6 +141,7 @@
   }
 
   function loadDate(date) {
+    state.currentDate = date;
     $("current-date").textContent = fmt(date) + " 《新闻联播》";
     document.title = "新闻联播 " + fmt(date);
     markActive(date);
@@ -166,14 +170,137 @@
       });
   }
 
+  /* ---- 渲染 + 金字塔重构 ---- */
   function render(md) {
     var holder = document.createElement("div");
     holder.innerHTML = state.md.render(md);
     sanitize(holder);
+    var frag = restructure(holder);
+    var source = frag || holder;
     var c = $("content");
     c.textContent = "";
-    while (holder.firstChild) c.appendChild(holder.firstChild);
-    document.querySelector("#content").scrollTop = 0;
+    while (source.firstChild) c.appendChild(source.firstChild);
+    c.scrollTop = 0;
+  }
+
+  /* 解析渲染后的 DOM → 金字塔布局：
+     meta/参考链接条 → 目录（01/02 层次）→ 01 摘要 → 02 详细新闻（条目 01..NN）
+     结构不符（如上游格式变化）时返回 null，退回原样渲染 */
+  function restructure(holder) {
+    var h1 = holder.querySelector("h1");
+    var absH = null, detailH = null;
+    holder.querySelectorAll("h2").forEach(function (h) {
+      var t = h.textContent;
+      if (t.indexOf("新闻摘要") >= 0) absH = h;
+      else if (t.indexOf("详细新闻") >= 0) detailH = h;
+    });
+    if (!absH || !detailH) return null;
+    var date = state.currentDate || "";
+
+    function collectAfter(start) { // start 的后续兄弟，直到下一个 h2
+      var out = [];
+      var n = start.nextSibling;
+      while (n) {
+        var next = n.nextSibling;
+        if (n.tagName === "H2") break;
+        out.push(n);
+        n = next;
+      }
+      return out;
+    }
+
+    // 详细新闻按 h3 切条目
+    var items = [], cur = null;
+    collectAfter(detailH).forEach(function (n) {
+      if (n.tagName === "H3") { cur = { h: n, nodes: [] }; items.push(cur); }
+      else if (cur) { cur.nodes.push(n); }
+    });
+
+    var frag = document.createDocumentFragment();
+
+    // -- 标题 --
+    if (h1) frag.appendChild(h1);
+
+    // -- 参考信息条（置顶）--
+    var meta = document.createElement("div");
+    meta.className = "meta-bar";
+    var m1 = document.createElement("span");
+    m1.textContent = "播出 " + fmt(date);
+    var m2 = document.createElement("span");
+    m2.textContent = "条目 " + items.length;
+    var m3 = document.createElement("a");
+    m3.href = "https://tv.cctv.com/lm/xwlb/day/" + date + ".shtml";
+    m3.target = "_blank";
+    m3.rel = "noopener";
+    m3.textContent = "央视网当日页 ↗";
+    meta.appendChild(m1); meta.appendChild(m2); meta.appendChild(m3);
+    frag.appendChild(meta);
+
+    // -- 目录（01/02 层次）--
+    var toc = document.createElement("nav");
+    toc.className = "toc";
+    var tocTitle = document.createElement("div");
+    tocTitle.className = "toc-title";
+    tocTitle.textContent = "目录";
+    toc.appendChild(tocTitle);
+    var l1 = document.createElement("ol");
+    l1.className = "toc-l1";
+
+    function tocEntry(num, text, target, sub) {
+      var li = document.createElement("li");
+      var a = document.createElement("a");
+      a.textContent = num + "　" + text;
+      a.href = "#";
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        if (target && target.scrollIntoView) target.scrollIntoView({ block: "start" });
+      });
+      li.appendChild(a);
+      if (sub) li.appendChild(sub);
+      return li;
+    }
+
+    // -- 01 摘要节 --
+    var sec1 = document.createElement("section");
+    var sh1 = document.createElement("h2");
+    sh1.textContent = "01 · 新闻摘要";
+    sec1.appendChild(sh1);
+    collectAfter(absH).forEach(function (n) { sec1.appendChild(n); });
+
+    // -- 02 详细新闻节（条目 01..NN）--
+    var sec2 = document.createElement("section");
+    var sh2 = document.createElement("h2");
+    sh2.textContent = "02 · 详细新闻";
+    sec2.appendChild(sh2);
+    var l2 = document.createElement("ol");
+    l2.className = "toc-l2";
+    items.forEach(function (it, i) {
+      var num = pad2(i + 1);
+      var title = it.h.textContent.replace(/^\d+\s*[.、]\s*/, "");
+      it.h.textContent = num + " · " + title;
+      it.h.id = "item-" + num;
+      var li = document.createElement("li");
+      var a = document.createElement("a");
+      a.textContent = num + "　" + title;
+      a.href = "#";
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        it.h.scrollIntoView({ block: "start" });
+      });
+      li.appendChild(a);
+      l2.appendChild(li);
+      sec2.appendChild(it.h);
+      it.nodes.forEach(function (n) { sec2.appendChild(n); });
+    });
+
+    l1.appendChild(tocEntry("01", "新闻摘要", sec1, null));
+    l1.appendChild(tocEntry("02", "详细新闻", sec2, l2));
+    toc.appendChild(l1);
+    frag.appendChild(toc);
+
+    frag.appendChild(sec1);
+    frag.appendChild(sec2);
+    return frag;
   }
 
   /* ---- 启动 ---- */
