@@ -1,0 +1,86 @@
+name: update
+
+on:
+  schedule:
+    # 东八区 20:35 首跑（播出 19:00 + 央视网上稿延迟）
+    - cron: "35 12 * * *"
+    # 东八区 22:00 幂等补跑（当日已抓取则秒退；cron 本身可延迟 5~30 分钟）
+    - cron: "0 14 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "YYYYMMDD（留空 = 今天）"
+        required: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: xwlb-update
+  cancel-in-progress: false
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.run.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 爬取
+        id: run
+        env:
+          DATE: ${{ inputs.date }}
+        run: |
+          set +e
+          python3 crawler/crawl.py --date "$DATE"
+          code=$?
+          set -e
+          case $code in
+            0) echo "result=ok"       >> "$GITHUB_OUTPUT" ;;
+            2) echo "result=not_published" >> "$GITHUB_OUTPUT"  # 当日未发布，容忍：留给下一轮 cron
+               echo "::notice::当日稿件未发布（exit 2），等待下一轮" ;;
+            *) echo "result=failed"   >> "$GITHUB_OUTPUT"; exit $code ;;
+          esac
+      - name: 提交推送
+        if: steps.run.outputs.result == 'ok'
+        run: |
+          git config user.name "xwlb-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add news/
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+          else
+            git commit -m "AUTO UPDATE [bot]"
+            git push
+          fi
+
+  alert:
+    needs: crawl
+    if: needs.crawl.outputs.result == 'failed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'crawl-failed';
+            const title = '爬取失败：需要人工介入';
+            const body = `run: ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.RUN_ID}\n\n退出码非 0 非 2。大概率 CCTV 页面改版（选择器失效）或网络持续失败，请人工检查 crawler/crawl.py。`;
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: label,
+            });
+            if (issues.data.length) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issues.data[0].number, body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: [label],
+              });
+            }

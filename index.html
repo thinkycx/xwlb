@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>新闻联播文字稿归档</title>
+<meta name="description" content="《新闻联播》每日文字稿归档，爬取自央视网 tv.cctv.com。">
+<link rel="stylesheet" href="assets/app.css">
+<script src="assets/vendor/markdown-it.min.js"></script>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <header class="side-head">
+      <h1>新闻联播文字稿</h1>
+      <p class="side-sub" id="stat">加载中…</p>
+    </header>
+    <div class="search-box">
+      <input type="search" id="search" placeholder="搜索日期 / 摘要关键词…" autocomplete="off">
+    </div>
+    <nav id="date-list" aria-label="日期列表"></nav>
+  </aside>
+  <main id="main">
+    <header class="main-head">
+      <button id="nav-toggle" aria-label="打开日期列表">☰</button>
+      <span id="current-date" class="current-date"></span>
+      <button id="theme-toggle" aria-label="切换主题">◐</button>
+    </header>
+    <article id="content" class="markdown-body">
+      <div class="loading">加载中…</div>
+    </article>
+  </main>
+  <div id="overlay"></div>
+</div>
+<script src="assets/app.js"></script>
+</body>
+</html>
