@@ -45,8 +45,23 @@ jobs:
                echo "::notice::当日稿件未发布（exit 2），等待下一轮" ;;
             *) echo "result=failed"   >> "$GITHUB_OUTPUT"; exit $code ;;
           esac
+          # 回补近 3 天缺口（幂等：已有则秒退）。
+          # 动机：GitHub cron 可延迟数小时，跨北京零点后 now() 已是"明天"，
+          # 当日 exit 2 之外昨天缺的稿永远不会自动补——这里兜住。
+          set +e
+          for i in 1 2 3; do
+            D=$(python3 -c "from datetime import datetime, timedelta, timezone
+            print((datetime.now(timezone.utc) + timedelta(hours=8) - timedelta(days=$i)).strftime('%Y%m%d'))")
+            python3 crawler/crawl.py --date "$D"
+            c=$?
+            if [[ $c -ne 0 && $c -ne 2 ]]; then
+              echo "result=failed" >> "$GITHUB_OUTPUT"
+              exit $c
+            fi
+          done
+          set -e
       - name: 提交推送
-        if: steps.run.outputs.result == 'ok'
+        if: steps.run.outputs.result != 'failed'
         run: |
           git config user.name "xwlb-bot"
           git config user.email "actions@users.noreply.github.com"
