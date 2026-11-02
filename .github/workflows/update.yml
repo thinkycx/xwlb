@@ -50,8 +50,7 @@ jobs:
           # 当日 exit 2 之外昨天缺的稿永远不会自动补——这里兜住。
           set +e
           for i in 1 2 3; do
-            D=$(python3 -c "from datetime import datetime, timedelta, timezone
-            print((datetime.now(timezone.utc) + timedelta(hours=8) - timedelta(days=$i)).strftime('%Y%m%d'))")
+            D=$(python3 -c "from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc) + timedelta(hours=8) - timedelta(days=$i)).strftime('%Y%m%d'))")
             python3 crawler/crawl.py --date "$D"
             c=$?
             if [[ $c -ne 0 && $c -ne 2 ]]; then
